@@ -141,7 +141,7 @@ variable "start_at_boot" {
 }
 
 variable "qemu_agent" {
-  description = "Whether to enable the QEMU Guest Agent. qemu-guest-agent daemon must run the in the quest."
+  description = "Whether to enable the QEMU Guest Agent. qemu-guest-agent daemon must run in the guest."
   type        = bool
   default     = true
 }
@@ -151,9 +151,6 @@ variable "bios" {
   type        = string
   default     = "seabios"
 }
-
-
-
 
 
 
@@ -186,7 +183,7 @@ variable "proxmox_insecure_tls" {
 }
 
 variable "iso_download" {
-  description = "Wether to download from iso_url or use the existing iso_file in the iso_storage_pool."
+  description = "Whether to download from iso_url or use the existing iso_file in the iso_storage_pool."
   type        = bool
   default     = true
 }
@@ -219,13 +216,13 @@ variable "iso_storage_pool" {
 }
 
 variable "iso_unmount" {
-  description = "Wether to remove the mounted ISO from the template after finishing."
+  description = "Whether to remove the mounted ISO from the template after finishing."
   type        = bool
   default     = true
 }
 
 variable "cloud_init" {
-  description = "Wether to add a Cloud-Init CDROM drive after the virtual machine has been converted to a template."
+  description = "Whether to add a Cloud-Init CDROM drive after the virtual machine has been converted to a template."
   type        = bool
   default     = true
 }
@@ -268,7 +265,7 @@ variable "boot_wait" {
 }
 
 variable "task_timeout" {
-  description = "The timeout for Promox API operations, e.g. clones"
+  description = "The timeout for Proxmox API operations, e.g. clones"
   type        = string
   default     = "5m"
 }
@@ -337,19 +334,19 @@ variable "winrm_use_ssl" {
 }
 
 variable "windows_edition" {
-  description = "Windows edition of the ISO file to install (this is usefull to overwrite for Windows 11 Pro or Server Core/Datacenter)."
+  description = "Windows edition of the ISO file to install (this is useful to overwrite for Windows 11 Pro or Server Core/Datacenter)."
   type        = string
   default     = ""
 }
 
 variable "windows_language" {
-  description = "Windows language to use. The ISO file must contain this lanugage."
+  description = "Windows language to use. The ISO file must contain this language."
   type        = string
   default     = "en-US"
 }
 
 variable "windows_input_language" {
-  description = "Windows language for the keyboard to use. The ISO file must contain this lanugage."
+  description = "Windows language for the keyboard to use. The ISO file must contain this language."
   type        = string
   default     = "en-US"
 }
