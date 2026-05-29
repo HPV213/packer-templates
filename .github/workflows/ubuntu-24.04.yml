@@ -16,3 +16,4 @@ jobs:
       proxmox_host: ${{ secrets.proxmox_host }}
       proxmox_user: ${{ secrets.proxmox_user }}
       proxmox_password: ${{ secrets.proxmox_password }}
+      proxmox_token: ${{ secrets.proxmox_token }}
