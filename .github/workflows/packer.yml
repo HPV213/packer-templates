@@ -21,6 +21,8 @@ on:
         required: false
       proxmox_token:
         required: false
+      proxmox_node:
+        required: true
 concurrency:
   group: ${{ inputs.vm_id }}
   cancel-in-progress: false
@@ -48,7 +50,7 @@ jobs:
           PKR_VAR_proxmox_user: ${{ secrets.proxmox_user }}
           PKR_VAR_proxmox_password: ${{ secrets.proxmox_password }}
           PKR_VAR_proxmox_token: ${{ secrets.proxmox_token }}
-          PKR_VAR_node: proxmox
+          PKR_VAR_node: ${{ secrets.proxmox_node }}
           PKR_VAR_pool: templates
           PKR_VAR_iso_storage_pool: local
           PKR_VAR_disk_storage_pool: local-lvm
