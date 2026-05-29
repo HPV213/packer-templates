@@ -5,9 +5,6 @@ on:
       name:
         required: true
         type: string
-      vm_id: 
-        required: true
-        type: number
     secrets:
       netbird_setup_key:
         required: true
@@ -21,10 +18,8 @@ on:
         required: false
       proxmox_token:
         required: false
-      proxmox_node:
-        required: true
 concurrency:
-  group: ${{ inputs.vm_id }}
+  group: packer-${{ inputs.name }}
   cancel-in-progress: false
 jobs:
   build:
@@ -44,13 +39,40 @@ jobs:
           packer-version: 1.15.3
       - name: Install mkisofs
         run: sudo apt update && sudo apt install -y mkisofs
+      - name: Get Proxmox Node
+        id: proxmox
+        env:
+          PROXMOX_HOST: ${{ secrets.proxmox_host }}
+          PROXMOX_USER: ${{ secrets.proxmox_user }}
+          PROXMOX_TOKEN: ${{ secrets.proxmox_token }}
+        run: |
+          set -euo pipefail
+          # Build auth header from user!token format
+          TOKEN_ID="${PROXMOX_TOKEN%%=*}"
+          TOKEN_SECRET="${PROXMOX_TOKEN#*=}"
+          AUTH_HEADER="PVEAPIToken=${PROXMOX_USER}!${TOKEN_ID}=${TOKEN_SECRET}"
+
+          # Get online nodes and pick the one with fewest VMs for load balancing
+          NODE=$(curl -sk \
+            -H "Authorization: ${AUTH_HEADER}" \
+            "https://${PROXMOX_HOST}/api2/json/cluster/resources?type=node" | \
+            jq -r '[.data[] | select(.status=="online")] | sort_by(.vmid // 0) | .[0].node')
+
+          if [ -z "$NODE" ] || [ "$NODE" = "null" ]; then
+            echo "ERROR: No online node found in cluster"
+            exit 1
+          fi
+
+          echo "Selected node: ${NODE}"
+          echo "node=${NODE}" >> "$GITHUB_OUTPUT"
+
       - name: Build image from template
         env:
           PKR_VAR_proxmox_host: ${{ secrets.proxmox_host }}
           PKR_VAR_proxmox_user: ${{ secrets.proxmox_user }}
           PKR_VAR_proxmox_password: ${{ secrets.proxmox_password }}
           PKR_VAR_proxmox_token: ${{ secrets.proxmox_token }}
-          PKR_VAR_node: ${{ secrets.proxmox_node }}
+          PKR_VAR_node: ${{ steps.proxmox.outputs.node }}
           PKR_VAR_pool: templates
           PKR_VAR_iso_storage_pool: local
           PKR_VAR_disk_storage_pool: local-lvm
@@ -58,7 +80,6 @@ jobs:
           PKR_VAR_disk_format: raw
           PKR_VAR_iso_download: "true"
           PKR_VAR_iso_download_pve: "true"
-          PKR_VAR_vmid: ${{ inputs.vm_id }}
           PKR_VAR_packer_http_interface: "wt0"
           PACKER_KEY_INTERVAL: 100ms
         run: |

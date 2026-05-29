@@ -9,7 +9,6 @@ jobs:
     uses: ./.github/workflows/packer.yml
     with:
       name: talos-1.13
-      vm_id: 1024
     secrets:
       netbird_setup_key: ${{ secrets.NETBIRD_SETUP_KEY }}
       netbird_management_url: ${{ secrets.NETBIRD_MANAGEMENT_URL }}
@@ -17,4 +16,3 @@ jobs:
       proxmox_user: ${{ secrets.proxmox_user }}
       proxmox_password: ${{ secrets.proxmox_password }}
       proxmox_token: ${{ secrets.proxmox_token }}
-      proxmox_node: ${{ secrets.proxmox_node }}
