@@ -38,7 +38,7 @@ jobs:
           # renovate: githubReleaseVar repo=hashicorp/packer
           packer-version: 1.15.3
       - name: Install mkisofs
-        run: sudo apt update && sudo apt install -y mkisofs
+        run: sudo apt update && sudo apt install -y mkisofs jq curl
       - name: Get Proxmox Node
         id: proxmox
         env:
@@ -47,12 +47,10 @@ jobs:
           PROXMOX_TOKEN: ${{ secrets.proxmox_token }}
         run: |
           set -euo pipefail
-          # Build auth header from user!token format
           TOKEN_ID="${PROXMOX_TOKEN%%=*}"
           TOKEN_SECRET="${PROXMOX_TOKEN#*=}"
           AUTH_HEADER="PVEAPIToken=${PROXMOX_USER}!${TOKEN_ID}=${TOKEN_SECRET}"
 
-          # Get online nodes and pick the one with fewest VMs for load balancing
           NODE=$(curl -sk \
             -H "Authorization: ${AUTH_HEADER}" \
             "https://${PROXMOX_HOST}/api2/json/cluster/resources?type=node" | \
@@ -65,6 +63,86 @@ jobs:
 
           echo "Selected node: ${NODE}"
           echo "node=${NODE}" >> "$GITHUB_OUTPUT"
+          echo "auth_header=${AUTH_HEADER}" >> "$GITHUB_OUTPUT"
+
+      - name: Download and upload ISO
+        id: iso
+        env:
+          PROXMOX_HOST: ${{ secrets.proxmox_host }}
+          AUTH_HEADER: ${{ steps.proxmox.outputs.auth_header }}
+          NODE: ${{ steps.proxmox.outputs.node }}
+        run: |
+          set -euo pipefail
+
+          # Extract ISO URL and filename from pkrvars
+          ISO_URL=$(awk -F'"' '/^iso_url/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
+          ISO_FILE=$(awk -F'"' '/^iso_file/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
+
+          if [ -z "$ISO_URL" ]; then
+            echo "No iso_url found, skipping ISO download"
+            exit 0
+          fi
+
+          echo "ISO URL: ${ISO_URL}"
+          echo "ISO file: ${ISO_FILE}"
+
+          # Check if ISO already exists in storage
+          EXISTS=$(curl -sk \
+            -H "Authorization: ${AUTH_HEADER}" \
+            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/content" | \
+            jq -r ".data[] | select(.volid==\"iso/${ISO_FILE}\") | .volid" | head -1)
+
+          if [ -n "$EXISTS" ]; then
+            echo "ISO already exists in storage: ${EXISTS}"
+            exit 0
+          fi
+
+          # Ask Proxmox to download the ISO directly from the URL
+          echo "Requesting Proxmox to download ISO..."
+          TASK=$(curl -sk -X POST \
+            -H "Authorization: ${AUTH_HEADER}" \
+            -d "content=iso" \
+            -d "filename=${ISO_FILE}" \
+            -d "url=${ISO_URL}" \
+            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/download-url" | \
+            jq -r '.data')
+
+          echo "Download task: ${TASK}"
+
+          # Wait for download task to complete (max 30 min)
+          TIMEOUT=1800
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            STATUS=$(curl -sk \
+              -H "Authorization: ${AUTH_HEADER}" \
+              "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status" | \
+              jq -r '.data.status')
+
+            if [ "$STATUS" = "stopped" ]; then
+              EXITCODE=$(curl -sk \
+                -H "Authorization: ${AUTH_HEADER}" \
+                "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status" | \
+                jq -r '.data.exitstatus')
+              if [ "$EXITCODE" = "OK" ]; then
+                echo "ISO downloaded successfully"
+                exit 0
+              else
+                echo "ERROR: Download task failed: ${EXITCODE}"
+                # Log task output for debugging
+                curl -sk \
+                  -H "Authorization: ${AUTH_HEADER}" \
+                  "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/log" | jq -r '.data[] | .t' || true
+                exit 1
+              fi
+            fi
+
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+            echo "Waiting for download... (${ELAPSED}s elapsed, status: ${STATUS})"
+          done
+
+          echo "ERROR: Download timed out after ${TIMEOUT}s"
+          exit 1
 
       - name: Build image from template
         env:
@@ -78,8 +156,7 @@ jobs:
           PKR_VAR_disk_storage_pool: local-lvm
           PKR_VAR_cloud_init_storage_pool: local-lvm
           PKR_VAR_disk_format: raw
-          PKR_VAR_iso_download: "true"
-          PKR_VAR_iso_download_pve: "false"
+          PKR_VAR_iso_download: "false"
           PKR_VAR_packer_http_interface: "wt0"
           PACKER_KEY_INTERVAL: 100ms
         run: |
@@ -87,5 +164,6 @@ jobs:
           packer build -var-file="${{ inputs.name }}.pkrvars.hcl" -force .
 
       - name: Netbird Disconnect
+        if: always()
         shell: bash
         run: sudo netbird down
