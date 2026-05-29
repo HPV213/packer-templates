@@ -24,23 +24,29 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
+        timeout-minutes: 5
         uses: actions/checkout@v6
       - name: Netbird Connect
+        timeout-minutes: 5
         uses: gene1wood/netbird-connect@b8c6916d108aee5e327546e49efcd29bbd41b69f #v1.1.0
         with:
           setup-key: ${{ secrets.netbird_setup_key }}
           management-url: ${{ secrets.netbird_management_url }}
       - name: Use Packer
+        timeout-minutes: 5
         uses: hashicorp-contrib/setup-packer@v3
         with:
           # renovate: githubReleaseVar repo=hashicorp/packer
           packer-version: 1.15.3
       - name: Install mkisofs
+        timeout-minutes: 5
         run: sudo apt update && sudo apt install -y mkisofs jq curl
       - name: Get Proxmox Node
         id: proxmox
+        timeout-minutes: 5
         env:
           PROXMOX_HOST: ${{ secrets.proxmox_host }}
           PROXMOX_USER: ${{ secrets.proxmox_user }}
@@ -51,7 +57,7 @@ jobs:
           TOKEN_SECRET="${PROXMOX_TOKEN#*=}"
           AUTH_HEADER="PVEAPIToken=${PROXMOX_USER}!${TOKEN_ID}=${TOKEN_SECRET}"
 
-          NODE=$(curl -sk \
+          NODE=$(curl -sk -m 30 \
             -H "Authorization: ${AUTH_HEADER}" \
             "https://${PROXMOX_HOST}/api2/json/cluster/resources?type=node" | \
             jq -r '[.data[] | select(.status=="online")] | sort_by(.vmid // 0) | .[0].node')
@@ -65,8 +71,9 @@ jobs:
           echo "node=${NODE}" >> "$GITHUB_OUTPUT"
           echo "auth_header=${AUTH_HEADER}" >> "$GITHUB_OUTPUT"
 
-      - name: Download and upload ISO
+      - name: Download ISO via Proxmox
         id: iso
+        timeout-minutes: 10
         env:
           PROXMOX_HOST: ${{ secrets.proxmox_host }}
           AUTH_HEADER: ${{ steps.proxmox.outputs.auth_header }}
@@ -74,7 +81,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Extract ISO URL and filename from pkrvars
           ISO_URL=$(awk -F'"' '/^iso_url/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
           ISO_FILE=$(awk -F'"' '/^iso_file/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
 
@@ -83,23 +89,23 @@ jobs:
             exit 0
           fi
 
-          echo "ISO URL: ${ISO_URL}"
-          echo "ISO file: ${ISO_FILE}"
+          echo "ISO: ${ISO_FILE}"
+          echo "URL: ${ISO_URL}"
 
           # Check if ISO already exists in storage
-          EXISTS=$(curl -sk \
+          EXISTS=$(curl -sk -m 30 \
             -H "Authorization: ${AUTH_HEADER}" \
             "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/content" | \
             jq -r ".data[] | select(.volid==\"iso/${ISO_FILE}\") | .volid" | head -1)
 
           if [ -n "$EXISTS" ]; then
-            echo "ISO already exists in storage: ${EXISTS}"
+            echo "ISO already exists: ${EXISTS}"
             exit 0
           fi
 
-          # Ask Proxmox to download the ISO directly from the URL
-          echo "Requesting Proxmox to download ISO..."
-          RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST \
+          # Request Proxmox to download ISO
+          echo "Requesting download..."
+          RESPONSE=$(curl -sk -m 60 -w "\n%{http_code}" -X POST \
             -H "Authorization: ${AUTH_HEADER}" \
             -d "content=iso" \
             -d "filename=${ISO_FILE}" \
@@ -107,33 +113,32 @@ jobs:
             "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/download-url")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          echo "HTTP status: ${HTTP_CODE}"
-          echo "API response: ${BODY}"
+          echo "HTTP ${HTTP_CODE}: ${BODY}"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: ISO download request failed (HTTP ${HTTP_CODE})"
+            exit 1
+          fi
+
           TASK=$(echo "$BODY" | jq -r '.data')
+          echo "Task: ${TASK}"
 
-          echo "Download task: ${TASK}"
-
-          # Wait for download task to complete (max 30 min)
-          TIMEOUT=1800
+          # Poll task status
           ELAPSED=0
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            STATUS=$(curl -sk \
+          while [ $ELAPSED -lt 540 ]; do
+            TASK_STATUS=$(curl -sk -m 30 \
               -H "Authorization: ${AUTH_HEADER}" \
-              "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status" | \
-              jq -r '.data.status')
+              "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status")
+            STATUS=$(echo "$TASK_STATUS" | jq -r '.data.status')
 
             if [ "$STATUS" = "stopped" ]; then
-              EXITCODE=$(curl -sk \
-                -H "Authorization: ${AUTH_HEADER}" \
-                "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status" | \
-                jq -r '.data.exitstatus')
-              if [ "$EXITCODE" = "OK" ]; then
+              EXITSTATUS=$(echo "$TASK_STATUS" | jq -r '.data.exitstatus')
+              if [ "$EXITSTATUS" = "OK" ]; then
                 echo "ISO downloaded successfully"
                 exit 0
               else
-                echo "ERROR: Download task failed: ${EXITCODE}"
-                # Log task output for debugging
-                curl -sk \
+                echo "ERROR: Task failed: ${EXITSTATUS}"
+                curl -sk -m 30 \
                   -H "Authorization: ${AUTH_HEADER}" \
                   "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/log" | jq -r '.data[] | .t' || true
                 exit 1
@@ -142,13 +147,14 @@ jobs:
 
             sleep 10
             ELAPSED=$((ELAPSED + 10))
-            echo "Waiting for download... (${ELAPSED}s elapsed, status: ${STATUS})"
+            echo "Downloading... ${ELAPSED}s"
           done
 
-          echo "ERROR: Download timed out after ${TIMEOUT}s"
+          echo "ERROR: Timed out after ${ELAPSED}s"
           exit 1
 
       - name: Build image from template
+        timeout-minutes: 10
         env:
           PKR_VAR_proxmox_host: ${{ secrets.proxmox_host }}
           PKR_VAR_proxmox_user: ${{ secrets.proxmox_user }}
@@ -169,5 +175,6 @@ jobs:
 
       - name: Netbird Disconnect
         if: always()
+        timeout-minutes: 3
         shell: bash
         run: sudo netbird down
