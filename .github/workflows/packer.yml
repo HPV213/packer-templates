@@ -11,6 +11,8 @@ on:
     secrets:
       netbird_setup_key:
         required: true
+      netbird_management_url:
+        required: true
       proxmox_host:
         required: true
       proxmox_user:
@@ -30,6 +32,7 @@ jobs:
         uses: gene1wood/netbird-connect@b8c6916d108aee5e327546e49efcd29bbd41b69f #v1.1.0
         with:
           setup-key: ${{ secrets.netbird_setup_key }}
+          management-url: ${{ secrets.netbird_management_url }}
       - name: Use Packer
         uses: hashicorp-contrib/setup-packer@v3
         with:
