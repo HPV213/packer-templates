@@ -118,10 +118,11 @@ jobs:
           echo "URL: ${ISO_URL}"
 
           # Check if ISO already exists in storage
-          EXISTS=$(curl -sk -m 30 \
+          STORAGE_RESP=$(curl -sk -m 30 \
             -H "Authorization: ${AUTH_HEADER}" \
-            "${NODE_URL}/api2/json/nodes/${NODE}/storage/local/content" | \
-            jq -r ".data[] | select(.volid==\"iso/${ISO_FILE}\") | .volid" | head -1)
+            "${NODE_URL}/api2/json/nodes/${NODE}/storage/local/content")
+          echo "Storage response: $(echo "$STORAGE_RESP" | head -c 200)"
+          EXISTS=$(echo "$STORAGE_RESP" | jq -r '(.data // [])[] | select(.volid=="iso/'"${ISO_FILE}"'") | .volid' | head -1)
 
           if [ -n "$EXISTS" ]; then
             echo "ISO already exists: ${EXISTS}"
