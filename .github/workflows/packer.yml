@@ -67,17 +67,29 @@ jobs:
             exit 1
           fi
 
-          echo "Selected node: ${NODE}"
+          # Get node IP (interface with gateway)
+          NODE_IP=$(curl -sk -m 30 \
+            -H "Authorization: ${AUTH_HEADER}" \
+            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/network" | \
+            jq -r '[.data[] | select(.gateway != null and .address != null and .active == 1)] | .[0].address | split("/")[0]')
+
+          if [ -z "$NODE_IP" ] || [ "$NODE_IP" = "null" ]; then
+            echo "ERROR: No network interface with gateway found on node ${NODE}"
+            exit 1
+          fi
+
+          echo "Selected node: ${NODE} (${NODE_IP})"
           echo "node=${NODE}" >> "$GITHUB_OUTPUT"
+          echo "node_ip=${NODE_IP}" >> "$GITHUB_OUTPUT"
           echo "auth_header=${AUTH_HEADER}" >> "$GITHUB_OUTPUT"
 
-      - name: Download ISO via Proxmox
+      - name: Upload ISO to Proxmox
         id: iso
-        timeout-minutes: 10
+        timeout-minutes: 15
         env:
-          PROXMOX_HOST: ${{ secrets.proxmox_host }}
           AUTH_HEADER: ${{ steps.proxmox.outputs.auth_header }}
           NODE: ${{ steps.proxmox.outputs.node }}
+          NODE_IP: ${{ steps.proxmox.outputs.node_ip }}
         run: |
           set -euo pipefail
 
@@ -85,7 +97,7 @@ jobs:
           ISO_FILE=$(awk -F'"' '/^iso_file/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
 
           if [ -z "$ISO_URL" ]; then
-            echo "No iso_url found, skipping ISO download"
+            echo "No iso_url found, skipping ISO upload"
             exit 0
           fi
 
@@ -95,7 +107,7 @@ jobs:
           # Check if ISO already exists in storage
           EXISTS=$(curl -sk -m 30 \
             -H "Authorization: ${AUTH_HEADER}" \
-            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/content" | \
+            "https://${NODE_IP}:8006/api2/json/nodes/${NODE}/storage/local/content" | \
             jq -r ".data[] | select(.volid==\"iso/${ISO_FILE}\") | .volid" | head -1)
 
           if [ -n "$EXISTS" ]; then
@@ -103,55 +115,30 @@ jobs:
             exit 0
           fi
 
-          # Request Proxmox to download ISO
-          echo "Requesting download..."
-          RESPONSE=$(curl -sk -m 60 -w "\n%{http_code}" -X POST \
+          # Download ISO to runner
+          echo "Downloading ISO from source..."
+          curl -fL --progress-bar -o "/tmp/${ISO_FILE}" "${ISO_URL}"
+          echo "Download complete: $(du -h /tmp/${ISO_FILE} | cut -f1)"
+
+          # Upload to Proxmox node directly
+          echo "Uploading to node ${NODE} (${NODE_IP})..."
+          RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST \
             -H "Authorization: ${AUTH_HEADER}" \
-            -d "content=iso" \
-            -d "filename=${ISO_FILE}" \
-            -d "url=${ISO_URL}" \
-            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/download-url")
+            -F "content=iso" \
+            -F "filename=@/tmp/${ISO_FILE}" \
+            "https://${NODE_IP}:8006/api2/json/nodes/${NODE}/storage/local/upload")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           echo "HTTP ${HTTP_CODE}: ${BODY}"
 
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: ISO download request failed (HTTP ${HTTP_CODE})"
+            echo "ERROR: ISO upload failed (HTTP ${HTTP_CODE})"
             exit 1
           fi
 
-          TASK=$(echo "$BODY" | jq -r '.data')
-          echo "Task: ${TASK}"
-
-          # Poll task status
-          ELAPSED=0
-          while [ $ELAPSED -lt 540 ]; do
-            TASK_STATUS=$(curl -sk -m 30 \
-              -H "Authorization: ${AUTH_HEADER}" \
-              "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status")
-            STATUS=$(echo "$TASK_STATUS" | jq -r '.data.status')
-
-            if [ "$STATUS" = "stopped" ]; then
-              EXITSTATUS=$(echo "$TASK_STATUS" | jq -r '.data.exitstatus')
-              if [ "$EXITSTATUS" = "OK" ]; then
-                echo "ISO downloaded successfully"
-                exit 0
-              else
-                echo "ERROR: Task failed: ${EXITSTATUS}"
-                curl -sk -m 30 \
-                  -H "Authorization: ${AUTH_HEADER}" \
-                  "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/log" | jq -r '.data[] | .t' || true
-                exit 1
-              fi
-            fi
-
-            sleep 10
-            ELAPSED=$((ELAPSED + 10))
-            echo "Downloading... ${ELAPSED}s"
-          done
-
-          echo "ERROR: Timed out after ${ELAPSED}s"
-          exit 1
+          # Cleanup
+          rm -f "/tmp/${ISO_FILE}"
+          echo "ISO uploaded successfully"
 
       - name: Build image from template
         timeout-minutes: 10
