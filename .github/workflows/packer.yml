@@ -78,9 +78,22 @@ jobs:
             exit 1
           fi
 
+          NODE_URL="https://${NODE_IP}:8006"
           echo "Selected node: ${NODE} (${NODE_IP})"
+
+          # Verify connectivity to node IP
+          echo "Testing connectivity to ${NODE_URL}..."
+          if ! curl -sk -m 10 -o /dev/null -w "%{http_code}" \
+            -H "Authorization: ${AUTH_HEADER}" \
+            "${NODE_URL}/api2/json/version" 2>/dev/null | grep -q "200"; then
+            echo "WARNING: Cannot reach ${NODE_URL}, falling back to PROXMOX_HOST"
+            NODE_URL="https://${PROXMOX_HOST}"
+          else
+            echo "Connectivity OK"
+          fi
+
           echo "node=${NODE}" >> "$GITHUB_OUTPUT"
-          echo "node_ip=${NODE_IP}" >> "$GITHUB_OUTPUT"
+          echo "node_url=${NODE_URL}" >> "$GITHUB_OUTPUT"
           echo "auth_header=${AUTH_HEADER}" >> "$GITHUB_OUTPUT"
 
       - name: Upload ISO to Proxmox
@@ -89,7 +102,7 @@ jobs:
         env:
           AUTH_HEADER: ${{ steps.proxmox.outputs.auth_header }}
           NODE: ${{ steps.proxmox.outputs.node }}
-          NODE_IP: ${{ steps.proxmox.outputs.node_ip }}
+          NODE_URL: ${{ steps.proxmox.outputs.node_url }}
         run: |
           set -euo pipefail
 
@@ -107,7 +120,7 @@ jobs:
           # Check if ISO already exists in storage
           EXISTS=$(curl -sk -m 30 \
             -H "Authorization: ${AUTH_HEADER}" \
-            "https://${NODE_IP}:8006/api2/json/nodes/${NODE}/storage/local/content" | \
+            "${NODE_URL}/api2/json/nodes/${NODE}/storage/local/content" | \
             jq -r ".data[] | select(.volid==\"iso/${ISO_FILE}\") | .volid" | head -1)
 
           if [ -n "$EXISTS" ]; then
@@ -121,12 +134,12 @@ jobs:
           echo "Download complete: $(du -h /tmp/${ISO_FILE} | cut -f1)"
 
           # Upload to Proxmox node directly
-          echo "Uploading to node ${NODE} (${NODE_IP})..."
+          echo "Uploading to node ${NODE} via ${NODE_URL}..."
           RESPONSE=$(curl -sk -w "\n%{http_code}" -X POST \
             -H "Authorization: ${AUTH_HEADER}" \
             -F "content=iso" \
             -F "filename=@/tmp/${ISO_FILE}" \
-            "https://${NODE_IP}:8006/api2/json/nodes/${NODE}/storage/local/upload")
+            "${NODE_URL}/api2/json/nodes/${NODE}/storage/local/upload")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           echo "HTTP ${HTTP_CODE}: ${BODY}"
