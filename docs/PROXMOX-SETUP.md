@@ -18,7 +18,8 @@ Packer performs these operations during a build:
 | Create VM | Create temporary VM on node | `VM.Allocate` |
 | Configure hardware | Set CPU, RAM, disk, network, VGA, BIOS | `VM.Config.CPU`, `.Memory`, `.Disk`, `.Network`, `.HWType`, `.Options` |
 | Mount ISO | Attach ISO file to VM | `Datastore.Audit`, `Datastore.AllocateSpace` |
-| Download ISO | Download ISO directly to PVE node | `Datastore.Upload` |
+| Download ISO (upload) | Upload ISO file to PVE node | `Datastore.Upload` |
+| Download ISO (from URL) | Download ISO via URL to PVE node | `Datastore.AllocateTemplate`, `Sys.AccessNetwork` |
 | Boot VM | Start the VM | `VM.PowerMgmt` |
 | Send keystrokes | Type boot commands via VNC | `VM.Console` |
 | Cloud-Init | Add Cloud-Init CDROM drive | `VM.Config.Cloudinit` |
@@ -44,11 +45,13 @@ pveum role add PackerBuilder -privs \
    VM.Config.Disk VM.Config.HWType VM.Config.Memory \
    VM.Config.Network VM.Config.Options VM.Console \
    VM.Monitor VM.PowerMgmt \
-   Datastore.AllocateSpace Datastore.Audit Datastore.Upload \
-   Pool.Allocate Sys.Audit"
+   Datastore.AllocateSpace Datastore.Audit Datastore.AllocateTemplate Datastore.Upload \
+   Pool.Allocate Sys.Audit Sys.AccessNetwork"
 ```
 
 ### 3. Assign Permissions
+
+**Important:** If using `--privsep 1` (default), permissions must be assigned to BOTH the user AND the token separately. See [Token Privilege Separation](#token-privilege-separation-privsep) below.
 
 Replace `proxmox` with your actual node name. Check with `pvesh get /nodes`.
 
@@ -64,6 +67,15 @@ pveum acl modify /storage/local-lvm -user packer@pve -role PackerBuilder
 
 # Pool — assign templates to pool
 pveum acl modify /pool/templates -user packer@pve -role PackerBuilder
+```
+
+If using `--privsep 1`, also run for the token (note single quotes around `!`):
+
+```bash
+pveum acl modify /nodes -token 'packer@pve!ci' -role PackerBuilder
+pveum acl modify /storage/local -token 'packer@pve!ci' -role PackerBuilder
+pveum acl modify /storage/local-lvm -token 'packer@pve!ci' -role PackerBuilder
+pveum acl modify /pool/templates -token 'packer@pve!ci' -role PackerBuilder
 ```
 
 ### 4. Create the Pool (if it doesn't exist)
@@ -109,8 +121,10 @@ Output:
 ```
 ☑ Datastore.AllocateSpace
 ☑ Datastore.Audit
+☑ Datastore.AllocateTemplate
 ☑ Datastore.Upload
 ☑ Pool.Allocate
+☑ Sys.AccessNetwork
 ☑ Sys.Audit
 ☑ VM.Allocate
 ☑ VM.Clone
@@ -153,14 +167,15 @@ In your GitHub repo: **Settings → Secrets and variables → Actions**
 | Secret | Value | Notes |
 |--------|-------|-------|
 | `proxmox_host` | `192.168.1.10:8006` | Proxmox API address (IP:port) |
-| `proxmox_user` | `packer@pve!ci` | Token format: `user!tokenid` |
-| `proxmox_password` | *(token secret value)* | The secret shown when creating the token |
+| `proxmox_user` | `packer@pve` | User without token ID (workflow auto-appends `!ci`) |
+| `proxmox_password` | *(empty)* | Not used when using token |
+| `proxmox_token` | `ci=TOKEN_SECRET` | Format: `tokenid=uuid` (workflow splits this) |
 | `NETBIRD_SETUP_KEY` | `a1b2c3d4-...` | Netbird setup key for VPN |
 | `NETBIRD_MANAGEMENT_URL` | `https://netbird.example.com` | Netbird self-hosted URL |
 
-If using password instead of token:
-- `proxmox_user` = `packer@pve`
-- `proxmox_password` = the user's password
+The workflow automatically splits `proxmox_token` into the correct format for Packer:
+- Packer `username` = `packer@pve!ci` (user + token ID)
+- Packer `token` = just the UUID secret
 
 ## Verify Setup
 
@@ -199,6 +214,50 @@ Run a manual build via GitHub Actions:
 2. Click **Run workflow → Run workflow**
 3. Monitor the build logs for permission errors
 
+## Token Privilege Separation (privsep)
+
+When creating an API token, Proxmox offers two modes:
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Separated** | `--privsep 1` (default) | Token has its own ACL, independent from user. Must grant permissions to token explicitly. Effective permissions = intersection of (user perms ∩ token perms). |
+| **Inherited** | `--privsep 0` | Token inherits all permissions from user. No separate ACL needed. |
+
+### Check current mode
+
+```bash
+pveum user token list packer@pve
+# If privsep column = 1 → must grant permissions to token separately
+# If privsep column = 0 → token already has user permissions
+```
+
+### Granting permissions to token (privsep 1)
+
+Every path the token needs to access must be granted separately. Use single quotes because `!` has special meaning in shell:
+
+```bash
+pveum acl modify /nodes -token 'packer@pve!ci' -role PackerBuilder
+pveum acl modify /storage/local -token 'packer@pve!ci' -role PackerBuilder
+pveum acl modify /storage/local-lvm -token 'packer@pve!ci' -role PackerBuilder
+pveum acl modify /pool/templates -token 'packer@pve!ci' -role PackerBuilder
+```
+
+### Switch to inherited mode (privsep 0)
+
+For convenience in trusted environments:
+
+```bash
+pveum user token modify packer@pve ci --privsep 0
+```
+
+### Verify token permissions
+
+```bash
+pveum user permissions packer@pve --tokenid ci
+# Or check specific path:
+pveum user token permissions packer@pve ci /storage/local
+```
+
 ## Troubleshooting
 
 ### `403 Permission check failed`
@@ -215,7 +274,7 @@ pveum acl list | grep packer
 
 ### `506 Proxy Error` during ISO upload
 
-The `Datastore.Upload` privilege is required when `iso_download_pve = "true"` (downloading ISO directly on the PVE node). Also ensure the `local` storage has enough space.
+The `Datastore.Upload` privilege is required when `iso_download_pve = "true"` (downloading ISO directly on the PVE node). Also ensure the `local` storage has enough space. If downloading ISOs from URL (`download-url` API), you also need `Datastore.AllocateTemplate` and `Sys.AccessNetwork`.
 
 ### Token not working
 
