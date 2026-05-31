@@ -41,6 +41,14 @@ if [ "$(uname -m)" = "arm64" ]; then
   ARCH_FLAG="--container-architecture linux/amd64"
 fi
 
+# Auto-detect Docker socket (Colima on macOS)
+if [ -z "${DOCKER_HOST:-}" ]; then
+  COLIMA_SOCK="$HOME/.colima/default/docker.sock"
+  if [ -S "$COLIMA_SOCK" ]; then
+    export DOCKER_HOST="unix://${COLIMA_SOCK}"
+  fi
+fi
+
 act workflow_dispatch \
   -W "${WORKFLOW}" \
   --secret-file "${SECRETS_FILE}" \
