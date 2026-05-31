@@ -13,8 +13,8 @@
 http_directory = "./http/vyos"
 
 # default credentials - change this after installation
-ssh_username   = "vyos"
-ssh_password   = "vyos"
+ssh_username = "vyos"
+ssh_password = "vyos"
 
 #################################################
 #
@@ -23,8 +23,8 @@ ssh_password   = "vyos"
 # - qemu guest agent is installed (debian bookworm - this might change in the future)
 #
 
-boot_wait      = "60s"
-boot_command   = [
+boot_wait = "60s"
+boot_command = [
   # login
   "vyos<wait>",
   "<enter><wait>",
@@ -160,5 +160,5 @@ boot_command   = [
   "<wait5>"
 ]
 
-provisioner  = []
+provisioner = []
 

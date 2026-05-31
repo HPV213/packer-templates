@@ -6,13 +6,13 @@ iso_checksum   = "file:https://download.rockylinux.org/pub/rocky/10.2/isos/x86_6
 http_directory = "./http/rocky-10"
 boot_wait      = "5s"
 boot_command = [
-    "c<wait> ",
-    "linux /images/pxeboot/vmlinuz inst.text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg",
-    "<enter><wait>",
-    "initrd /images/pxeboot/initrd.img",
-    "<enter><wait>",
-    "boot",
-    "<enter>"
+  "c<wait> ",
+  "linux /images/pxeboot/vmlinuz inst.text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg",
+  "<enter><wait>",
+  "initrd /images/pxeboot/initrd.img",
+  "<enter><wait>",
+  "boot",
+  "<enter>"
 ]
 provisioner = [
   "userdel --remove --force packer"

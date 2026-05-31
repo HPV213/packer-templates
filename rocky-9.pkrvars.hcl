@@ -5,7 +5,7 @@ iso_url        = "https://download.rockylinux.org/pub/rocky/9.8/isos/x86_64/Rock
 iso_checksum   = "file:https://download.rockylinux.org/pub/rocky/9.8/isos/x86_64/CHECKSUM"
 http_directory = "./http/rocky-9"
 boot_wait      = "5s"
-boot_command = ["<tab> text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg<enter><wait>"]
+boot_command   = ["<tab> text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg<enter><wait>"]
 provisioner = [
   "userdel --remove --force packer"
 ]

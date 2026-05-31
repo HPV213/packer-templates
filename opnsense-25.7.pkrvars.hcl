@@ -1,16 +1,16 @@
 # renovate: datasource=custom.opnsenseRelease
-name           = "opnsense-25.7-template"
-iso_file       = "OPNsense-25.7-dvd-amd64.iso"
-iso_url        = "https://pkg.opnsense.org/releases/25.7/OPNsense-25.7-dvd-amd64.iso.bz2"
-iso_checksum   = "file:https://pkg.opnsense.org/releases/25.7/OPNsense-25.7-checksums-amd64.sha256"
-disk_size      = "16G" # minimum
-memory         = 4096  # minimum
+name         = "opnsense-25.7-template"
+iso_file     = "OPNsense-25.7-dvd-amd64.iso"
+iso_url      = "https://pkg.opnsense.org/releases/25.7/OPNsense-25.7-dvd-amd64.iso.bz2"
+iso_checksum = "file:https://pkg.opnsense.org/releases/25.7/OPNsense-25.7-checksums-amd64.sha256"
+disk_size    = "16G" # minimum
+memory       = 4096  # minimum
 
 iso_download_pve = false # not compatible with bz2
 
 # default credentials - change this after installation
-ssh_username   = "root"
-ssh_password   = "opnsense"
+ssh_username = "root"
+ssh_password = "opnsense"
 
 cloud_init = false
 
@@ -23,8 +23,8 @@ cloud_init = false
 # - firewall is **DISABLED** at boot time via config.xml
 #
 
-boot_wait      = "120s" # 60s, 90s, 120s (change this if needed)
-boot_command   = [
+boot_wait = "120s" # 60s, 90s, 120s (change this if needed)
+boot_command = [
   # login as installer
   "installer<wait>",
   "<enter><wait>",
@@ -164,4 +164,4 @@ boot_command   = [
   "<enter><wait>"
 ]
 
-provisioner    = []
+provisioner = []

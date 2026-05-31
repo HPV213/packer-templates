@@ -6,3 +6,5 @@ packer_cache/
 packer.exe
 *.auto.pkrvars.hcl
 downloaded_iso_path/
+.secrets
+claudedocs/

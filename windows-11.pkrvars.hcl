@@ -14,21 +14,21 @@ unattended_content = {
   "/Autounattend.xml" = {
     template = "./http/windows/Autounattend-win11.xml.pkrtpl"
     vars = {
-      driver_version  = "w11"
-      image_name      = "Windows 11 Enterprise Evaluation"
+      driver_version = "w11"
+      image_name     = "Windows 11 Enterprise Evaluation"
     }
   }
 }
 additional_cd_files = [
   {
-    type = "sata"
+    type  = "sata"
     index = 3
-    files  = ["./http/windows-scripts/*"]
+    files = ["./http/windows-scripts/*"]
   }
 ]
 os             = "win11"
 communicator   = "winrm"
 http_directory = ""
-cloud_init   = false
+cloud_init     = false
 boot_command   = []
 provisioner    = []

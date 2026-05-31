@@ -1,0 +1,17 @@
+repos:
+  - repo: local
+    hooks:
+      - id: packer-fmt
+        name: Packer Format
+        entry: packer fmt .
+        language: system
+        pass_filenames: false
+        types: [file]
+        files: \.pkr\.hcl$
+      - id: packer-validate
+        name: Packer Validate
+        entry: bash -c 'packer init config.pkr.hcl 2>/dev/null && packer validate -syntax-only .'
+        language: system
+        pass_filenames: false
+        types: [file]
+        files: \.pkr\.hcl$

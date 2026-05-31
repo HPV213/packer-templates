@@ -5,7 +5,7 @@ iso_url        = "https://repo.almalinux.org/almalinux/9.8/isos/x86_64/AlmaLinux
 iso_checksum   = "file:https://repo.almalinux.org/almalinux/9.8/isos/x86_64/CHECKSUM"
 http_directory = "./http/almalinux-9"
 boot_wait      = "5s"
-boot_command = ["<tab> text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg<enter><wait>"]
+boot_command   = ["<tab> text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg<enter><wait>"]
 provisioner = [
   "userdel --remove --force packer"
 ]

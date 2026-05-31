@@ -246,9 +246,9 @@ variable "additional_iso_files" {
 variable "additional_cd_files" {
   description = "Additional files attached to the virtual machine as iso."
   type = list(object({
-    type   = string
-    index  = number
-    files  = list(string)
+    type  = string
+    index = number
+    files = list(string)
   }))
   default = []
 }
@@ -278,11 +278,11 @@ variable "http_directory" {
 
 variable "unattended_content" {
   description = "Key/Values for the windows unattended cd with the Autounattend.xml file."
-  type        = map(object({
-                  template = string
-                  vars = map(string)
-                }))
-  default     = {}
+  type = map(object({
+    template = string
+    vars     = map(string)
+  }))
+  default = {}
 }
 
 variable "communicator" {

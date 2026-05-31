@@ -14,21 +14,21 @@ unattended_content = {
   "/Autounattend.xml" = {
     template = "./http/windows/Autounattend-server.xml.pkrtpl"
     vars = {
-      driver_version  = "2k25"
-      image_name      = "Windows Server 2025 SERVERSTANDARD"
+      driver_version = "2k25"
+      image_name     = "Windows Server 2025 SERVERSTANDARD"
     }
   }
 }
 additional_cd_files = [
   {
-    type = "sata"
+    type  = "sata"
     index = 3
-    files  = ["./http/windows-scripts/*"]
+    files = ["./http/windows-scripts/*"]
   }
 ]
 os             = "win11"
 communicator   = "winrm"
 http_directory = ""
-cloud_init   = false
+cloud_init     = false
 boot_command   = []
 provisioner    = []
