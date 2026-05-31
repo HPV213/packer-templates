@@ -1,0 +1,205 @@
+name: Local CI Test
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        required: true
+        type: string
+        description: "OS template name (e.g. debian-13)"
+      skip-build:
+        required: false
+        type: boolean
+        default: false
+        description: "Skip Packer build (validate only)"
+
+concurrency:
+  group: local-ci-${{ inputs.name }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        timeout-minutes: 5
+        uses: actions/checkout@v6
+
+      - name: Use Packer
+        timeout-minutes: 5
+        uses: hashicorp-contrib/setup-packer@v3
+        with:
+          packer-version: 1.15.3
+
+      - name: Install dependencies
+        timeout-minutes: 5
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            sudo apt update && sudo apt install -y mkisofs jq curl
+          else
+            apt update && apt install -y mkisofs jq curl
+          fi
+
+      - name: Packer Init
+        timeout-minutes: 5
+        run: packer init config.pkr.hcl
+
+      - name: Packer Validate
+        timeout-minutes: 5
+        run: packer validate -syntax-only -var-file="${{ inputs.name }}.pkrvars.hcl" .
+
+      - name: Validate ISO URL reachable
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          ISO_URL=$(awk -F'"' '/^iso_url/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
+          if [ -n "$ISO_URL" ]; then
+            echo "Checking ISO URL: ${ISO_URL}"
+            HTTP_CODE=$(curl -sIo /dev/null -w "%{http_code}" -m 30 "${ISO_URL}")
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+              echo "ISO URL reachable (HTTP ${HTTP_CODE})"
+            else
+              echo "WARNING: ISO URL returned HTTP ${HTTP_CODE}"
+            fi
+          else
+            echo "No iso_url in pkrvars, skipping"
+          fi
+
+      - name: Validate Packer variables
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          echo "=== Variables for ${{ inputs.name }} ==="
+          grep -E '^(iso_url|iso_file|vm_name|boot_command|memory|cores)' "${{ inputs.name }}.pkrvars.hcl" || true
+          echo ""
+          echo "=== ISO checksum ==="
+          grep -E '^(iso_checksum)' "${{ inputs.name }}.pkrvars.hcl" || true
+
+      - name: Get Proxmox Node
+        if: ${{ !inputs.skip-build }}
+        id: proxmox
+        timeout-minutes: 5
+        env:
+          PROXMOX_HOST: ${{ secrets.proxmox_host }}
+          PROXMOX_USER: ${{ secrets.proxmox_user }}
+          PROXMOX_TOKEN: ${{ secrets.proxmox_token }}
+        run: |
+          set -euo pipefail
+          TOKEN_ID="${PROXMOX_TOKEN%%=*}"
+          TOKEN_SECRET="${PROXMOX_TOKEN#*=}"
+          AUTH_HEADER="PVEAPIToken=${PROXMOX_USER}!${TOKEN_ID}=${TOKEN_SECRET}"
+
+          NODE=$(curl -sk -m 30 \
+            -H "Authorization: ${AUTH_HEADER}" \
+            "https://${PROXMOX_HOST}/api2/json/cluster/resources?type=node" | \
+            jq -r '[.data[] | select(.status=="online")] | sort_by(.vmid // 0) | .[0].node')
+
+          if [ -z "$NODE" ] || [ "$NODE" = "null" ]; then
+            echo "ERROR: No online node found in cluster"
+            exit 1
+          fi
+
+          echo "Selected node: ${NODE}"
+          echo "node=${NODE}" >> "$GITHUB_OUTPUT"
+          echo "auth_header=${AUTH_HEADER}" >> "$GITHUB_OUTPUT"
+          echo "packer_user=${PROXMOX_USER}!${TOKEN_ID}" >> "$GITHUB_OUTPUT"
+          echo "packer_token=${TOKEN_SECRET}" >> "$GITHUB_OUTPUT"
+
+      - name: Download ISO via Proxmox
+        if: ${{ !inputs.skip-build }}
+        id: iso
+        timeout-minutes: 10
+        env:
+          PROXMOX_HOST: ${{ secrets.proxmox_host }}
+          AUTH_HEADER: ${{ steps.proxmox.outputs.auth_header }}
+          NODE: ${{ steps.proxmox.outputs.node }}
+        run: |
+          set -euo pipefail
+
+          ISO_URL=$(awk -F'"' '/^iso_url/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
+          ISO_FILE=$(awk -F'"' '/^iso_file/ {print $2}' "${{ inputs.name }}.pkrvars.hcl")
+
+          if [ -z "$ISO_URL" ]; then
+            echo "No iso_url found, skipping ISO download"
+            exit 0
+          fi
+
+          echo "ISO: ${ISO_FILE}"
+          echo "URL: ${ISO_URL}"
+
+          EXISTS=$(curl -sk -m 30 \
+            -H "Authorization: ${AUTH_HEADER}" \
+            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/content" | \
+            jq -r '(.data // [])[] | select(.volid=="iso/'"${ISO_FILE}"'") | .volid' | head -1)
+
+          if [ -n "$EXISTS" ]; then
+            echo "ISO already exists: ${EXISTS}"
+            exit 0
+          fi
+
+          echo "Requesting download..."
+          RESPONSE=$(curl -sk -m 60 -w "\n%{http_code}" -X POST \
+            -H "Authorization: ${AUTH_HEADER}" \
+            -d "content=iso" \
+            -d "filename=${ISO_FILE}" \
+            -d "url=${ISO_URL}" \
+            "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/download-url")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP ${HTTP_CODE}: ${BODY}"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: ISO download request failed (HTTP ${HTTP_CODE})"
+            exit 1
+          fi
+
+          TASK=$(echo "$BODY" | jq -r '.data')
+          echo "Task: ${TASK}"
+
+          ELAPSED=0
+          while [ $ELAPSED -lt 540 ]; do
+            TASK_STATUS=$(curl -sk -m 30 \
+              -H "Authorization: ${AUTH_HEADER}" \
+              "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/tasks/${TASK}/status")
+            STATUS=$(echo "$TASK_STATUS" | jq -r '.data.status')
+
+            if [ "$STATUS" = "stopped" ]; then
+              EXITSTATUS=$(echo "$TASK_STATUS" | jq -r '.data.exitstatus')
+              if [ "$EXITSTATUS" = "OK" ]; then
+                echo "ISO downloaded successfully"
+                exit 0
+              elif echo "$EXITSTATUS" | grep -q "refusing to override existing file"; then
+                echo "ISO already exists on node, skipping download"
+                exit 0
+              else
+                echo "ERROR: Task failed: ${EXITSTATUS}"
+                exit 1
+              fi
+            fi
+
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+            echo "Downloading... ${ELAPSED}s"
+          done
+
+          echo "ERROR: Timed out after ${ELAPSED}s"
+          exit 1
+
+      - name: Build image from template
+        if: ${{ !inputs.skip-build }}
+        timeout-minutes: 20
+        env:
+          PKR_VAR_proxmox_host: ${{ secrets.proxmox_host }}
+          PKR_VAR_proxmox_user: ${{ steps.proxmox.outputs.packer_user }}
+          PKR_VAR_proxmox_password: ""
+          PKR_VAR_proxmox_token: ${{ steps.proxmox.outputs.packer_token }}
+          PKR_VAR_node: ${{ steps.proxmox.outputs.node }}
+          PKR_VAR_pool: templates
+          PKR_VAR_iso_storage_pool: local
+          PKR_VAR_disk_storage_pool: local-lvm
+          PKR_VAR_cloud_init_storage_pool: local-lvm
+          PKR_VAR_disk_format: raw
+          PKR_VAR_iso_download: "false"
+          PACKER_KEY_INTERVAL: 100ms
+        run: |
+          packer build -var-file="${{ inputs.name }}.pkrvars.hcl" -force .
