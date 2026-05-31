@@ -188,7 +188,7 @@ jobs:
           exit 1
 
       - name: Build image from template
-        timeout-minutes: 10
+        timeout-minutes: 20
         env:
           PKR_VAR_proxmox_host: ${{ secrets.proxmox_host }}
           PKR_VAR_proxmox_user: ${{ steps.proxmox.outputs.packer_user }}
