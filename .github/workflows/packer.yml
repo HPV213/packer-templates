@@ -96,6 +96,12 @@ jobs:
           echo "node_url=${NODE_URL}" >> "$GITHUB_OUTPUT"
           echo "auth_header=${AUTH_HEADER}" >> "$GITHUB_OUTPUT"
 
+          # Format token for Packer Proxmox plugin
+          PACKER_USER="${PROXMOX_USER}!${TOKEN_ID}"
+          PACKER_TOKEN="${TOKEN_SECRET}"
+          echo "packer_user=${PACKER_USER}" >> "$GITHUB_OUTPUT"
+          echo "packer_token=${PACKER_TOKEN}" >> "$GITHUB_OUTPUT"
+
       - name: Download ISO via Proxmox
         id: iso
         timeout-minutes: 10
@@ -182,9 +188,9 @@ jobs:
         timeout-minutes: 10
         env:
           PKR_VAR_proxmox_host: ${{ secrets.proxmox_host }}
-          PKR_VAR_proxmox_user: ${{ secrets.proxmox_user }}
-          PKR_VAR_proxmox_password: ${{ secrets.proxmox_password }}
-          PKR_VAR_proxmox_token: ${{ secrets.proxmox_token }}
+          PKR_VAR_proxmox_user: ${{ steps.proxmox.outputs.packer_user }}
+          PKR_VAR_proxmox_password: ""
+          PKR_VAR_proxmox_token: ${{ steps.proxmox.outputs.packer_token }}
           PKR_VAR_node: ${{ steps.proxmox.outputs.node }}
           PKR_VAR_pool: templates
           PKR_VAR_iso_storage_pool: local
