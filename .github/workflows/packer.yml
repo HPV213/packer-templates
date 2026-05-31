@@ -134,14 +134,13 @@ jobs:
             exit 0
           fi
 
-          # Request Proxmox to download ISO (overwrite if exists)
+          # Request Proxmox to download ISO
           echo "Requesting download..."
           RESPONSE=$(curl -sk -m 60 -w "\n%{http_code}" -X POST \
             -H "Authorization: ${AUTH_HEADER}" \
             -d "content=iso" \
             -d "filename=${ISO_FILE}" \
             -d "url=${ISO_URL}" \
-            -d "overwrite=1" \
             "https://${PROXMOX_HOST}/api2/json/nodes/${NODE}/storage/local/download-url")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
@@ -167,6 +166,9 @@ jobs:
               EXITSTATUS=$(echo "$TASK_STATUS" | jq -r '.data.exitstatus')
               if [ "$EXITSTATUS" = "OK" ]; then
                 echo "ISO downloaded successfully"
+                exit 0
+              elif echo "$EXITSTATUS" | grep -q "refusing to override existing file"; then
+                echo "ISO already exists on node, skipping download"
                 exit 0
               else
                 echo "ERROR: Task failed: ${EXITSTATUS}"
